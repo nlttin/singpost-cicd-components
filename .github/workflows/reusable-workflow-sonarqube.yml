@@ -26,18 +26,19 @@ jobs:
            fetch-depth: 0 # Essential for SonarQube to perform proper branch analysis
 
         - name: SonarQube Scan
-          uses: sonarsource/sonarqube-scan-action@v7.1.0 # Latest
+          uses: SonarSource/sonarqube-scan-action@v7.1.0 # Latest
           env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
             SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           with:
+            projectBaseDir: ${{ inputs.config-path || './config-sonar/' }}
             args: >
                 -Dsonar.projectKey=${{ inputs.PROJECTID }}
-                -Dsonar.projectBaseDir=${{ inputs.config-path }}
                 -Dsonar.terraform.provider.gcp.version=latest
+
         
         - name: SonarQube Quality Gate Check
-          uses: sonarsource/sonarqube-quality-gate-action@v1.2.0 # Latest
+          uses: SonarSource/sonarqube-quality-gate-action@v1.2.0 # Latest
           timeout-minutes: 5
           env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
