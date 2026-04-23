@@ -34,12 +34,16 @@ jobs:
             projectBaseDir: ${{ inputs.config-path || './config-sonar/' }}
             args: >
                 -Dsonar.projectKey=${{ inputs.PROJECTID }}
+                -Dsonar.scanner.metadataFilePath=./config-sonar/report_${{ github.run_id }}.txt
                 -Dsonar.terraform.provider.gcp.version=latest
 
         
         - name: SonarQube Quality Gate Check
           uses: SonarSource/sonarqube-quality-gate-action@v1.2.0 # Latest
           timeout-minutes: 5
+          # Point this to the metadata file created in your custom base directory
+          with:
+            scanMetadataReportFile: ./config-sonar/report_${{ github.run_id }}.txt
           env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
             SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
