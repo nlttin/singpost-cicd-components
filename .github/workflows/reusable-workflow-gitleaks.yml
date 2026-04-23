@@ -34,6 +34,10 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
 
+    permissions: 
+      contents: read 
+      security-events: write
+
     steps:
       # Checkout caller repository
       - uses: actions/checkout@v4
@@ -104,6 +108,10 @@ jobs:
           fi
 
           echo "base_ref=$BASE" >> $GITHUB_OUTPUT
+
+          if [ -n "$BASE" ]; then
+            git fetch origin ${BASE#origin/} --depth=1 || true
+          fi
 
       # Detect baseline file
       - name: Detect baseline
@@ -177,8 +185,9 @@ jobs:
 
       # Upload SARIF (only if exists)
       - name: Upload SARIF
-        if: always() && steps.scan.outputs.report_exists == 'true'
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.scan.outputs.report_exists == 'true' && github.event_name != 'pull_request_target'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gitleaks-report.sarif
 
