@@ -6,10 +6,10 @@ useDefault = true
 
 # =========================================================
 # GLOBAL ALLOWLIST
-# Used to reduce false positives across all rules
 # =========================================================
 [allowlist]
 description = "Global allowlist for common false positives"
+
 regexes = [
   '''(?i)example''',
   '''(?i)test''',
@@ -18,7 +18,6 @@ regexes = [
   '''(?i)changeme'''
 ]
 
-# Ignore common dependency / generated files
 paths = [
   '''go\.sum''',
   '''package-lock\.json''',
@@ -30,7 +29,7 @@ paths = [
 ]
 
 # =========================================================
-# CUSTOM RULES (HIGH VALUE DETECTION)
+# CUSTOM RULES
 # =========================================================
 
 # ---------------------------------------------------------
@@ -44,7 +43,7 @@ entropy = 3.5
 tags = ["key", "generic"]
 
 # ---------------------------------------------------------
-# Private Keys (RSA, EC, OpenSSH)
+# Private Keys
 # ---------------------------------------------------------
 [[rules]]
 id = "private-key"
@@ -62,7 +61,7 @@ regex = '''AKIA[0-9A-Z]{16}'''
 tags = ["aws", "key"]
 
 # ---------------------------------------------------------
-# AWS Secret Key (loose pattern)
+# AWS Secret Key
 # ---------------------------------------------------------
 [[rules]]
 id = "aws-secret-key"
@@ -99,7 +98,7 @@ regex = '''eyJ[A-Za-z0-9_-]+?\.[A-Za-z0-9._-]+?\.[A-Za-z0-9_-]+'''
 tags = ["jwt", "token"]
 
 # ---------------------------------------------------------
-# Password in config (basic heuristic)
+# Hardcoded Password (with allowlist FIXED)
 # ---------------------------------------------------------
 [[rules]]
 id = "hardcoded-password"
@@ -108,21 +107,14 @@ regex = '''(?i)(password|passwd|pwd)[\s:=]+['"]?.{6,}['"]?'''
 entropy = 3.0
 tags = ["password"]
 
-# =========================================================
-# RULE-SPECIFIC ALLOWLIST (fine-tuning)
-# =========================================================
-
-# Reduce noise for password rule
-[[rules.allowlist]]
-description = "Ignore obvious non-sensitive password placeholders"
-regexes = [
-  '''(?i)password\s*[:=]\s*["']?(password|123456|admin)["']?'''
-]
+  [rules.allowlist]
+  description = "Ignore obvious non-sensitive password placeholders"
+  regexes = [
+    '''(?i)password\s*[:=]\s*["']?(password|123456|admin)["']?'''
+  ]
 
 # =========================================================
-# ENTROPY SETTINGS (GLOBAL TUNING)
+# GLOBAL ENTROPY SETTINGS
 # =========================================================
-
 [entropy]
-# Lower = more sensitive, higher = less noise
 min = 3.0
