@@ -2,24 +2,24 @@ name: SonarQube Scan
 
 on:
     workflow_call:
-    inputs:
-        config-path:
-            required: false
-            type: string
-        PROJECTID: 
-            required: false
-            type: string
-        cache-folder:
-            required: false
-            type: string
-        environment:
-            required: false
-            type: string
+        inputs:
+            config-path:
+                required: false
+                type: string
+            PROJECTID: 
+                required: false
+                type: string
+            cache-folder:
+                required: false
+                type: string
+            environment:
+                required: false
+                type: string
 
 jobs:
     sonarqube:
-    runs-on: ubuntu-latest
-    steps:
+        runs-on: ubuntu-latest
+        steps:
         - name: Checkout Code
           uses: actions/checkout@v6
           with:
