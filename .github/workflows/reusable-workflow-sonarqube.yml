@@ -33,7 +33,7 @@ jobs:
           with:
             projectBaseDir: ${{ inputs.config-path || './config-sonar/' }}
             args: >
-                -Dsonar.projectID=${{ inputs.PROJECTID }}
+                -Dsonar.projectKey=${{ inputs.PROJECTID }}
                 -Dsonar.terraform.provider.gcp.version=latest
 
         
