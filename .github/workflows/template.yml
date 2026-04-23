@@ -31,7 +31,7 @@ jobs:
       
   sonar-scan:
     needs: checkout-code
-    uses: ./.github/workflows/workflow-sonarqube.yml
+    uses: ./.github/workflows/reusable-workflow-sonarqube.yml
     with:
       PROJECTID: 'singpost-cicd-components'
       config-path: '.'
