@@ -185,7 +185,10 @@ jobs:
 
       # Upload SARIF (only if exists)
       - name: Upload SARIF
-        if: always() && steps.scan.outputs.report_exists == 'true' && github.event_name != 'pull_request_target'
+        if: |
+          always() &&
+          steps.scan.outputs.report_exists == 'true' &&
+          github.event_name == 'push'
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
