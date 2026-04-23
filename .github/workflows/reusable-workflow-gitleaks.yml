@@ -1,0 +1,195 @@
+name: Gitleaks Scan (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        description: "Optional custom Gitleaks config file path"
+        required: false
+        type: string
+
+      scan_mode:
+        description: "Scan mode: pr (diff) or full (entire repo)"
+        required: false
+        type: string
+        default: "pr"
+
+      base-ref:
+        description: "Fallback base branch if PR context is not available"
+        required: false
+        type: string
+        default: "origin/main"
+
+      fail-on-detection:
+        description: "Fail pipeline if secrets detected"
+        required: false
+        type: boolean
+        default: true
+    
+    secrets:
+      GITLEAKS_LICENSE:
+        required: false
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout caller repository
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Checkout reusable repo (for default config)
+      - uses: actions/checkout@v4
+        with:
+          repository: SINGAPORE-POST-LIMITED/singpost-cicd-components
+          path: reusable
+          fetch-depth: 1
+
+      # Validate scan_mode (fail fast)
+      - name: Validate inputs
+        shell: bash
+        run: |
+          if [[ "${{ inputs.scan_mode }}" != "pr" && "${{ inputs.scan_mode }}" != "full" ]]; then
+            echo "Invalid scan_mode: ${{ inputs.scan_mode }}"
+            exit 2
+          fi
+
+      # Resolve config priority:
+      # 1. Input config-path
+      # 2. Caller repo .gitleaks.toml
+      # 3. Reusable default config
+      - name: Resolve config
+        id: config
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.config-path }}" ]; then
+            if [ -f "${{ inputs.config-path }}" ]; then
+              CONFIG="${{ inputs.config-path }}"
+              echo "Using input config: $CONFIG"
+            else
+              echo "ERROR: Provided config-path not found"
+              exit 2
+            fi
+
+          elif [ -f ".gitleaks.toml" ]; then
+            CONFIG=".gitleaks.toml"
+            echo "Using repo config"
+
+          else
+            CONFIG="reusable/.github/config/.gitleaks.toml"
+            echo "Using reusable default config: $CONFIG"
+          fi
+
+          echo "config=$CONFIG" >> $GITHUB_OUTPUT
+
+      
+      # Auto-detect base-ref for PR
+      # Fallback to input if not PR
+      - name: Detect base ref
+        id: baseref
+        shell: bash
+        run: |
+          if [ "${{ inputs.scan_mode }}" = "pr" ]; then
+            if [ -n "${{ github.event.pull_request.base.ref }}" ]; then
+              BASE="origin/${{ github.event.pull_request.base.ref }}"
+              echo "Detected PR base branch: $BASE"
+            else
+              BASE="${{ inputs.base-ref }}"
+              echo "Fallback base branch: $BASE"
+            fi
+          else
+            BASE=""
+          fi
+
+          echo "base_ref=$BASE" >> $GITHUB_OUTPUT
+
+      # Detect baseline file
+      - name: Detect baseline
+        id: baseline
+        shell: bash
+        run: |
+          if [ -f ".gitleaks-baseline.json" ]; then
+            echo "baseline=--baseline-path .gitleaks-baseline.json" >> $GITHUB_OUTPUT
+          else
+            echo "baseline=" >> $GITHUB_OUTPUT
+          fi
+
+      # Install pinned Gitleaks version
+      - name: Install Gitleaks
+        shell: bash
+        run: |
+          VERSION="v8.30.1"
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/gitleaks-linux-amd64 -o gitleaks
+          chmod +x gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      # Run scan with controlled exit handling
+      - name: Run Gitleaks
+        id: scan
+        continue-on-error: true
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        shell: bash
+        run: |
+          CONFIG_ARG="--config=${{ steps.config.outputs.config }}"
+
+          if [ "${{ inputs.scan_mode }}" = "pr" ]; then
+            LOG_OPTS="--log-opts=${{ steps.baseref.outputs.base_ref }}..HEAD"
+          else
+            LOG_OPTS=""
+          fi
+
+          set +e
+          gitleaks detect \
+            $CONFIG_ARG \
+            $LOG_OPTS \
+            ${{ steps.baseline.outputs.baseline }} \
+            --redact \
+            --verbose \
+            --report-format sarif \
+            --report-path gitleaks-report.sarif
+          status=$?
+
+          echo "scan_status=$status" >> $GITHUB_OUTPUT
+
+          if [ "$status" -eq 0 ]; then
+            echo "leaks=false" >> $GITHUB_OUTPUT
+          elif [ "$status" -eq 1 ]; then
+            echo "leaks=true" >> $GITHUB_OUTPUT
+          else
+            echo "leaks=error" >> $GITHUB_OUTPUT
+          fi
+
+          if [ -f "gitleaks-report.sarif" ]; then
+            echo "report_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "report_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Upload SARIF (only if exists)
+      - name: Upload SARIF
+        if: always() && steps.scan.outputs.report_exists == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks-report.sarif
+
+      # Upload artifact
+      - name: Upload report
+        if: always() && steps.scan.outputs.report_exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.sarif
+          retention-days: 30
+
+      # Fail if leaks detected (controlled)
+      - name: Fail if leaks found
+        if: steps.scan.outputs.leaks == 'true' && inputs.fail-on-detection == true
+        run: exit 1
+
+      # Fail if execution error
+      - name: Fail on execution error
+        if: steps.scan.outputs.leaks == 'error'
+        run: exit 1
