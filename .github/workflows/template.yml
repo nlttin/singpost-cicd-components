@@ -3,7 +3,7 @@
 name: CI-CD Workflow
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
+  # Triggers the workflow only on pull request events but only for the "main" branch
   push:
     branches:
       - dev
@@ -31,9 +31,12 @@ jobs:
       
   sonar-scan:
     needs: checkout-code
-    uses: ./.github/workflows/Sonarqbe/sonarqube.yml
+    uses: ./.github/workflows/workflow-sonarqube.yml
     with:
       PROJECTID: 'singpost-cicd-components'
       config-path: '.'
     secrets: inherit
+    #secrets:
+    #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
   
