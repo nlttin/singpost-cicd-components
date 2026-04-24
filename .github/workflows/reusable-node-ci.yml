@@ -1,0 +1,67 @@
+name: Reusable - Node CI
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        required: false
+        type: string
+        default: "22"
+      working_directory:
+        required: false
+        type: string
+        default: "."
+      install_command:
+        required: false
+        type: string
+        default: "npm ci"
+      test_command:
+        required: false
+        type: string
+        default: "npm test"
+      build_command:
+        required: false
+        type: string
+        default: "npm run build"
+    secrets:
+      NPM_TOKEN:
+        required: false
+
+jobs:
+  node-ci:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Configure npm auth
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        shell: bash
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      - name: Install dependencies
+        shell: bash
+        run: ${{ inputs.install_command }}
+
+      - name: Test
+        shell: bash
+        run: ${{ inputs.test_command }}
+
+      - name: Build
+        shell: bash
+        run: ${{ inputs.build_command }}
