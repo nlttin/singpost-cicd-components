@@ -29,6 +29,14 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+
+  dependency-review:
+    needs: checkout-code
+    uses: ./.github/workflows/reusable-workflow-dependency-review.yml
+    with:
+      config-file: './.github/dependency-review-config.yml'
+
+  sonar-scan:
       
   #sonar-scan:
   #  needs: checkout-code
