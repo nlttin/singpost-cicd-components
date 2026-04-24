@@ -9,6 +9,8 @@ on:
     paths:
       - '.github/workflows/*'
       - README.md
+      - ./*
+      - security/**
 
 
   pull_request:
@@ -48,7 +50,7 @@ jobs:
   #    config-path: '.'
   #  secrets: inherit
   #  #secrets:
-  #  #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  #  #  SONAR_TOKEN: "ZXCVBNMASDFGHJKL1234567890"
   #  #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   gitleaks-scan:
