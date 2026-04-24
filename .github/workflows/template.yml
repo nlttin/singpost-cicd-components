@@ -15,9 +15,11 @@ on:
     paths:
       - '.github/workflows/*'
   workflow_dispatch:
+
 permissions:
   contents: read
-  pull-requests: write
+  security-events: write
+
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
@@ -29,14 +31,22 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
       
-  sonar-scan:
+  #sonar-scan:
+  #  needs: checkout-code
+  #  uses: ./.github/workflows/workflow-sonarqube.yml
+  #  with:
+  #    PROJECTID: 'singpost-cicd-components'
+  #    config-path: '.'
+  #  secrets: inherit
+  #  #secrets:
+  #  #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  #  #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  gitleaks-scan:
     needs: checkout-code
-    uses: ./.github/workflows/reusable-workflow-sonarqube.yml
+    uses: ./.github/workflows/reusable-workflow-gitleaks.yml
     with:
-      PROJECTID: 'singpost-cicd-components'
-      config-path: '.'
+      scan_mode: full
+      fail-on-detection: false  
     secrets: inherit
-    #secrets:
-    #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-    #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
   
