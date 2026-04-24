@@ -1,0 +1,71 @@
+name: Reusable - GKE Deploy
+
+on:
+  workflow_call:
+    inputs:
+      delivery_pipeline:
+        required: true
+        type: string
+      target_name:
+        required: true
+        type: string
+      release_name:
+        required: true
+        type: string
+      image_ref:
+        required: true
+        type: string
+      skaffold_file:
+        required: false
+        type: string
+        default: "skaffold.yaml"
+      clouddeploy_file:
+        required: false
+        type: string
+        default: "clouddeploy/clouddeploy.yaml"
+      working_directory:
+        required: false
+        type: string
+        default: "."
+
+jobs:
+  gke-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show input summary
+        shell: bash
+        run: |
+          echo "delivery_pipeline=${{ inputs.delivery_pipeline }}"
+          echo "target_name=${{ inputs.target_name }}"
+          echo "release_name=${{ inputs.release_name }}"
+          echo "image_ref=${{ inputs.image_ref }}"
+          echo "skaffold_file=${{ inputs.skaffold_file }}"
+          echo "clouddeploy_file=${{ inputs.clouddeploy_file }}"
+
+      - name: Validate expected files
+        shell: bash
+        run: |
+          test -f "${{ inputs.skaffold_file }}" || { echo "Missing ${{ inputs.skaffold_file }}"; exit 1; }
+          test -f "${{ inputs.clouddeploy_file }}" || { echo "Missing ${{ inputs.clouddeploy_file }}"; exit 1; }
+
+      - name: Planned deploy steps
+        shell: bash
+        run: |
+          echo "Infrastructure is not ready yet."
+          echo "This workflow currently validates files and reserves the deploy path."
+          echo "Future steps will:"
+          echo "1. authenticate to Google Cloud"
+          echo "2. create a Cloud Deploy release"
+          echo "3. promote to the configured GKE target"
+          echo "4. run post-deploy smoke checks"
