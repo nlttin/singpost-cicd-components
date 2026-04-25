@@ -48,8 +48,6 @@ jobs:
   #    config-path: '.'
   #  secrets: inherit
   #  #secrets:
-  #  #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-  #  #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   gitleaks-scan:
     needs: checkout-code
@@ -58,4 +56,16 @@ jobs:
       scan_mode: full
       fail-on-detection: false  
     secrets: inherit
+  security-scans:
+    needs: [gitleaks-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Mocking CodeQL & SonarQube"
+  #    - run: echo "Mocking Checkov"
+  notify:
+    if: always()
+    needs: [deploy-dev, deploy-prod]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Mocking GChat Webhook"
   
