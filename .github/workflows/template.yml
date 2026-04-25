@@ -9,6 +9,8 @@ on:
     paths:
       - '.github/workflows/*'
       - README.md
+      - ./*
+      - security/**
 
 
   pull_request:
@@ -47,7 +49,6 @@ jobs:
   #    PROJECTID: 'singpost-cicd-components'
   #    config-path: '.'
   #  secrets: inherit
-  #  #secrets:
 
   gitleaks-scan:
     needs: checkout-code

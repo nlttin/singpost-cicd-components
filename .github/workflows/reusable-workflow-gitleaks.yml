@@ -44,13 +44,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Checkout reusable repo (for default config)
-      - uses: actions/checkout@v4
-        with:
-          repository: SINGAPORE-POST-LIMITED/singpost-cicd-components
-          path: reusable
-          fetch-depth: 1
-
       # Validate scan_mode (fail fast)
       - name: Validate inputs
         shell: bash
@@ -183,7 +176,7 @@ jobs:
             echo "report_exists=false" >> $GITHUB_OUTPUT
           fi
 
-      # Upload SARIF (only if exists)
+      # Upload SARIF (only if exists)F
       - name: Upload SARIF
         if: |
           always() &&
