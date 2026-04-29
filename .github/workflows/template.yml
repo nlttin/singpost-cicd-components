@@ -57,8 +57,16 @@ jobs:
       scan_mode: full
       fail-on-detection: false  
     secrets: inherit
+
+  checkov-scan:
+    needs: checkout-code
+    uses: ./.github/workflows/reusable-workflow-checkov.yml
+    with:
+      config-path: ./.github/config/checkov.yml
+    secrets: inherit
+    
   security-scans:
-    needs: [gitleaks-scan]
+    needs: [gitleaks-scan, checkov-scan]
     runs-on: ubuntu-latest
     steps:
       - run: echo "Mocking CodeQL & SonarQube"
