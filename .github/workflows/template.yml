@@ -49,6 +49,6 @@ jobs:
     uses: ./.github/workflows/reusable-workflow-gitleaks.yml
     with:
       scan_mode: full
-      fail-on-detection: false  
+      fail-on-detection: true  
     secrets: inherit
   
