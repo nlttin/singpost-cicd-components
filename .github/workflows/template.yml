@@ -1,5 +1,4 @@
 # This is a basic workflow to help you get started with Actions
-
 name: CI-CD Workflow
 # Controls when the workflow will run
 on:
@@ -9,6 +8,10 @@ on:
       - dev
     paths:
       - '.github/workflows/*'
+      - README.md
+      - ./*
+      - security/**
+
 
   pull_request:
     branches:
@@ -21,7 +24,7 @@ on:
 permissions:
   contents: read
   security-events: write
-
+  actions: read
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
@@ -32,6 +35,13 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+
+ #dependency-review:
+ #  needs: checkout-code
+ #  uses: ./.github/workflows/reusable-workflow-dependency-review.yml
+ #  with:
+ #    config-file: './.github/dependency-review-config.yml'
+
       
   #sonar-scan:
   #  needs: checkout-code
@@ -40,9 +50,6 @@ jobs:
   #    PROJECTID: 'singpost-cicd-components'
   #    config-path: '.'
   #  secrets: inherit
-  #  #secrets:
-  #  #  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-  #  #  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   gitleaks-scan:
     needs: checkout-code
@@ -51,4 +58,25 @@ jobs:
       scan_mode: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
       fail-on-detection: true  
     secrets: inherit
+
+  checkov-scan:
+    needs: checkout-code
+    uses: ./.github/workflows/reusable-workflow-checkov.yml
+    with:
+      config-path: ./.github/config/checkov.yml
+    secrets: inherit
+    
+  security-scans:
+    needs: [gitleaks-scan, checkov-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Mocking CodeQL & SonarQube"
+  #    - run: echo "Mocking Checkov"
+
+  # notify:
+  #   if: always()
+  #   needs: [deploy-dev, deploy-prod]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: echo "Mocking GChat Webhook"
   
