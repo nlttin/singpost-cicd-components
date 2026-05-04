@@ -55,8 +55,8 @@ jobs:
     needs: checkout-code
     uses: ./.github/workflows/reusable-workflow-gitleaks.yml
     with:
-      scan_mode: full
-      fail-on-detection: false  
+      scan_mode: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
+      fail-on-detection: true  
     secrets: inherit
 
   checkov-scan:
