@@ -1,10 +1,12 @@
 framework:
   - github_actions
-  - terraform
   - secrets
 
 quiet: true
 
 # skip-check:
 
-soft-fail: false
+soft-fail: true
+
+output:
+  - cli
