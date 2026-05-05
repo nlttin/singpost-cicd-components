@@ -44,6 +44,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Checkout reusable repo (for default config)
+      - name: Checkout reusable repo (optional)
+        if: ${{ !hashFiles('.gitleaks.toml') && !hashFiles('.github/config/.gitleaks.toml') }}
+        uses: actions/checkout@v4
+        with:
+          repository: SINGAPORE-POST-LIMITED/singpost-cicd-components
+          path: reusable
+          fetch-depth: 1
+
       # Validate scan_mode (fail fast)
       - name: Validate inputs
         shell: bash
@@ -72,13 +81,22 @@ jobs:
 
           elif [ -f ".gitleaks.toml" ]; then
             CONFIG=".gitleaks.toml"
-            echo "Using repo config"
+            echo "Using repo root config"
+
+          elif [ -f ".github/config/.gitleaks.toml" ]; then
+            CONFIG=".github/config/.gitleaks.toml"
+            echo "Using repo config (.github/config)"
+
+          elif [ -f "reusable/.github/config/.gitleaks.toml" ]; then
+            CONFIG="reusable/.github/config/.gitleaks.toml"
+            echo "Using reusable repo config"
 
           else
-            CONFIG="reusable/.github/config/.gitleaks.toml"
-            echo "Using reusable default config: $CONFIG"
+            echo "ERROR: No gitleaks config found"
+            exit 2
           fi
 
+          echo "Resolved config: $CONFIG"
           echo "config=$CONFIG" >> $GITHUB_OUTPUT
 
       
@@ -186,6 +204,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gitleaks-report.sarif
+          category: gitleaks
 
       # Upload artifact
       - name: Upload report

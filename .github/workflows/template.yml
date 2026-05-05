@@ -24,6 +24,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  actions: read
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
@@ -54,19 +55,28 @@ jobs:
     needs: checkout-code
     uses: ./.github/workflows/reusable-workflow-gitleaks.yml
     with:
-      scan_mode: full
-      fail-on-detection: false  
+      scan_mode: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
+      fail-on-detection: true  
     secrets: inherit
+
+  checkov-scan:
+    needs: checkout-code
+    uses: ./.github/workflows/reusable-workflow-checkov.yml
+    with:
+      config-path: ./.github/config/checkov.yml
+    secrets: inherit
+    
   security-scans:
-    needs: [gitleaks-scan]
+    needs: [gitleaks-scan, checkov-scan]
     runs-on: ubuntu-latest
     steps:
       - run: echo "Mocking CodeQL"
   #    - run: echo "Mocking Checkov"
-  notify:
-    if: always()
-    needs: [deploy-dev, deploy-prod]
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Mocking GChat Webhook"
+
+  # notify:
+  #   if: always()
+  #   needs: [deploy-dev, deploy-prod]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: echo "Mocking GChat Webhook"
   
