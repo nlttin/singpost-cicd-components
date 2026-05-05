@@ -25,9 +25,17 @@ on:
         required: false
         type: boolean
         default: true
+
+      config-ref:
+        description: "Branch or tag of central config"
+        required: false
+        type: string
+        default: "main"
     
     secrets:
       GITLEAKS_LICENSE:
+        required: false
+      PAT_TOKEN:
         required: false
 
 jobs:
@@ -44,14 +52,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Checkout reusable repo (for default config)
-      - name: Checkout reusable repo (optional)
+      # Download central config (only if no local config)
+      - name: Download central Gitleaks config
         if: ${{ !hashFiles('.gitleaks.toml') && !hashFiles('.github/config/.gitleaks.toml') }}
-        uses: actions/checkout@v4
-        with:
-          repository: SINGAPORE-POST-LIMITED/singpost-cicd-components
-          path: reusable
-          fetch-depth: 1
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "No PAT_TOKEN → skip central config"
+            exit 0
+          fi
+
+          echo "Downloading config from central repo..."
+
+          curl -sSL --fail --connect-timeout 10 \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/SINGAPORE-POST-LIMITED/singpost-cicd-components/contents/.github/config/.gitleaks.toml?ref=${{ inputs.config-ref }}" \
+            -o gitleaks-central.toml
+
+          if [ ! -s gitleaks-central.toml ]; then
+            echo "ERROR: Download failed or empty"
+            exit 2
+          fi
+
+          echo "Downloaded central config"
 
       # Validate scan_mode (fail fast)
       - name: Validate inputs
@@ -87,9 +112,19 @@ jobs:
             CONFIG=".github/config/.gitleaks.toml"
             echo "Using repo config (.github/config)"
 
-          elif [ -f "reusable/.github/config/.gitleaks.toml" ]; then
-            CONFIG="reusable/.github/config/.gitleaks.toml"
-            echo "Using reusable repo config"
+          elif [ -f "gitleaks-central.toml" ]; then
+            CONFIG="gitleaks-central.toml"
+            echo "Using central downloaded config"
+
+            if [ ! -s gitleaks-central.toml ]; then
+              echo "ERROR: Empty config file"
+              exit 2
+            fi
+
+            if grep -q "Not Found" gitleaks-central.toml; then
+              echo "ERROR: Invalid response from GitHub API"
+              exit 2
+            fi
 
           else
             echo "ERROR: No gitleaks config found"
@@ -194,7 +229,7 @@ jobs:
             echo "report_exists=false" >> $GITHUB_OUTPUT
           fi
 
-      # Upload SARIF (only if exists)F
+      # Upload SARIF (only if exists)
       - name: Upload SARIF
         if: |
           always() &&
