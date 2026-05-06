@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: 'security-extended'
+      fail-on-severity:
+        description: 'Fail pipeline if alerts found at this level or above: error, warning, note, none'
+        required: false
+        type: string
+        default: 'none'
 
 jobs:
   codeql:
@@ -48,3 +53,27 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: /language:${{ inputs.language }}
+          output: sarif-results
+          upload: always
+
+      - name: Fail pipeline on severity threshold
+        if: inputs.fail-on-severity != 'none'
+        run: |
+          SEVERITY="${{ inputs.fail-on-severity }}"
+          SARIF_FILE=$(ls sarif-results/*.sarif | head -1)
+
+          if [ "$SEVERITY" == "error" ]; then
+            COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
+          elif [ "$SEVERITY" == "warning" ]; then
+            COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
+          elif [ "$SEVERITY" == "note" ]; then
+            COUNT=$(jq '[.runs[].results[]] | length' "$SARIF_FILE")
+          else
+            COUNT=0
+          fi
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::error::CodeQL found $COUNT alert(s) at severity '$SEVERITY' or above. Pipeline failed."
+            exit 1
+          fi
+          echo "CodeQL check passed — no alerts at severity '$SEVERITY' or above."
