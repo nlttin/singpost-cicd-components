@@ -1,0 +1,50 @@
+name: Reusable - CodeQL Analysis
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: 'Language to analyze (javascript-typescript, python, java, go, etc.)'
+        required: false
+        type: string
+        default: 'javascript-typescript'
+      build-mode:
+        description: 'Build mode: none (interpreted), autobuild (compiled), manual'
+        required: false
+        type: string
+        default: 'none'
+      queries:
+        description: 'Query suite: security-extended, security-and-quality, etc.'
+        required: false
+        type: string
+        default: 'security-extended'
+
+jobs:
+  codeql:
+    name: CodeQL (${{ inputs.language }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ inputs.language }}
+          build-mode: ${{ inputs.build-mode }}
+          queries: ${{ inputs.queries }}
+
+      - name: Autobuild
+        if: inputs.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ inputs.language }}

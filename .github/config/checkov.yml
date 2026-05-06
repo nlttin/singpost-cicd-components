@@ -1,0 +1,12 @@
+framework:
+  - github_actions
+  - secrets
+
+quiet: true
+
+# skip-check:
+
+soft-fail: true
+
+output:
+  - cli
