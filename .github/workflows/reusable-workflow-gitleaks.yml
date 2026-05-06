@@ -68,7 +68,7 @@ jobs:
           curl -sSL --fail --connect-timeout 10 \
             -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.raw" \
-            "https://api.github.com/repos/SINGAPORE-POST-LIMITED/singpost-cicd-components/contents/.github/config/.gitleaks.toml?ref=${{ inputs.config-ref }}" \
+            "https://api.github.com/repos/nlttin/singpost-cicd-components/contents/.github/config/.gitleaks.toml?ref=${{ inputs.config-ref }}" \
             -o gitleaks-central.toml
 
           if [ ! -s gitleaks-central.toml ]; then
