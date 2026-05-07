@@ -19,10 +19,15 @@ on:
         type: string
         default: 'security-extended'
       fail-on-severity:
-        description: 'Fail pipeline if alerts found at this level or above: error, warning, note, none'
+        description: 'Fail pipeline if High/Critical found: error=block on high/critical, warning=block on medium+, none=report only'
         required: false
         type: string
         default: 'none'
+      max-medium:
+        description: 'Max allowed Medium findings before failing (0 = disabled)'
+        required: false
+        type: number
+        default: 0
 
 jobs:
   codeql:
@@ -56,24 +61,83 @@ jobs:
           output: sarif-results
           upload: always
 
-      - name: Fail pipeline on severity threshold
+      - name: Validate CodeQL Findings
         if: inputs.fail-on-severity != 'none'
+        env:
+          SEVERITY: ${{ inputs.fail-on-severity }}
+          MAX_MEDIUM: ${{ inputs.max-medium }}
         run: |
-          SEVERITY="${{ inputs.fail-on-severity }}"
-          SARIF_FILE=$(ls sarif-results/*.sarif | head -1)
+          SARIF_FILE=$(find sarif-results -name "*.sarif" | head -n 1)
 
-          if [ "$SEVERITY" == "error" ]; then
-            COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
-          elif [ "$SEVERITY" == "warning" ]; then
-            COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
-          elif [ "$SEVERITY" == "note" ]; then
-            COUNT=$(jq '[.runs[].results[]] | length' "$SARIF_FILE")
-          else
-            COUNT=0
-          fi
-
-          if [ "$COUNT" -gt 0 ]; then
-            echo "::error::CodeQL found $COUNT alert(s) at severity '$SEVERITY' or above. Pipeline failed."
+          if [ -z "$SARIF_FILE" ]; then
+            echo "No SARIF report found"
             exit 1
           fi
-          echo "CodeQL check passed — no alerts at severity '$SEVERITY' or above."
+
+          echo "===== CODEQL FINDINGS ====="
+          jq -r '
+            .runs[].results[] |
+            {
+              severity: (.properties.securitySeverityLevel // .level // "unknown"),
+              rule: .ruleId,
+              file: .locations[0].physicalLocation.artifactLocation.uri,
+              line: .locations[0].physicalLocation.region.startLine,
+              message: .message.text
+            }
+          ' "$SARIF_FILE"
+
+          echo ""
+          echo "===== SEVERITY SUMMARY ====="
+          jq -r '
+            .runs[].results[]
+            | (.properties.securitySeverityLevel // .level // "unknown")
+          ' "$SARIF_FILE" | tr '[:upper:]' '[:lower:]' | sort | uniq -c
+
+          HIGH_COUNT=$(jq '[
+            .runs[].results[]
+            | select(
+                (.properties.securitySeverityLevel // .level // "")
+                | ascii_downcase
+                | test("high|critical")
+              )
+          ] | length' "$SARIF_FILE")
+
+          MEDIUM_COUNT=$(jq '[
+            .runs[].results[]
+            | select(
+                (.properties.securitySeverityLevel // .level // "")
+                | ascii_downcase
+                == "medium"
+              )
+          ] | length' "$SARIF_FILE")
+
+          echo ""
+          echo "===== POLICY RESULT ====="
+          echo "High/Critical findings : $HIGH_COUNT"
+          echo "Medium findings        : $MEDIUM_COUNT"
+          echo "Fail-on-severity       : $SEVERITY"
+          echo "Medium threshold       : $MAX_MEDIUM"
+
+          if [ "$SEVERITY" == "error" ] && [ "$HIGH_COUNT" -gt 0 ]; then
+            echo ""
+            echo "::error::Blocking pipeline: $HIGH_COUNT High/Critical vulnerabilities detected."
+            exit 1
+          fi
+
+          if [ "$SEVERITY" == "warning" ]; then
+            TOTAL=$((HIGH_COUNT + MEDIUM_COUNT))
+            if [ "$TOTAL" -gt 0 ]; then
+              echo ""
+              echo "::error::Blocking pipeline: $TOTAL Medium/High/Critical vulnerabilities detected."
+              exit 1
+            fi
+          fi
+
+          if [ "$MAX_MEDIUM" -gt 0 ] && [ "$MEDIUM_COUNT" -gt "$MAX_MEDIUM" ]; then
+            echo ""
+            echo "::error::Blocking pipeline: Medium findings ($MEDIUM_COUNT) exceed threshold ($MAX_MEDIUM)."
+            exit 1
+          fi
+
+          echo ""
+          echo "Security gate passed."
