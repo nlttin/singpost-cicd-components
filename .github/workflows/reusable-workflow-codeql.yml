@@ -74,10 +74,7 @@ jobs:
             exit 1
           fi
 
-          # Determine effective policy:
-          # - explicit input (non-'none') overrides branch detection
-          # - main branch -> fail on HIGH/CRITICAL
-          # - all other branches -> warn only, do not block
+          # Determine effective policy
           if [ "$SEVERITY_OVERRIDE" != "none" ] && [ -n "$SEVERITY_OVERRIDE" ]; then
             POLICY="$SEVERITY_OVERRIDE"
           elif [ "$BRANCH" == "main" ]; then
@@ -86,10 +83,17 @@ jobs:
             POLICY="warn"
           fi
 
-          CRITICAL_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^critical$"))] | length' "$SARIF_FILE")
-          HIGH_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(high|error)$"))] | length' "$SARIF_FILE")
-          MEDIUM_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(medium|warning)$"))] | length' "$SARIF_FILE")
-          LOW_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(low|note)$"))] | length' "$SARIF_FILE")
+          # NOTE: CodeQL SARIF stores severity as CVSS score on the RULE definition,
+          # not on the result itself. Must lookup: rules[].properties["security-severity"]
+          # CVSS >= 9.0 = critical, >= 7.0 = high, >= 4.0 = medium, > 0 = low
+          JQ_RULE_MAP='(.runs[0].tool.driver.rules // [] |
+            map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
+            from_entries) as $sev'
+
+          CRITICAL_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | select(($sev[.ruleId] // 0) >= 9.0)] | length" "$SARIF_FILE")
+          HIGH_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c >= 7.0 and \$c < 9.0)] | length" "$SARIF_FILE")
+          MEDIUM_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c >= 4.0 and \$c < 7.0)] | length" "$SARIF_FILE")
+          LOW_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c > 0.0 and \$c < 4.0)] | length" "$SARIF_FILE")
           HC_COUNT=$((CRITICAL_COUNT + HIGH_COUNT))
 
           echo "============================================================"
@@ -102,33 +106,37 @@ jobs:
             echo ""
             echo "--- HIGH / CRITICAL FINDINGS ($HC_COUNT) ---"
             jq -r '
-              .runs[].results[] |
-              select(
-                (.properties.securitySeverityLevel // .level // "")
-                | ascii_downcase
-                | test("^(critical|high|error)$")
-              ) |
-              "  Severity : " + ((.properties.securitySeverityLevel // .level // "unknown") | ascii_upcase) +
-              "\n  Rule     : " + (.ruleId // "unknown") +
-              "\n  File     : " + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              "\n  Line     : " + ((.locations[0].physicalLocation.region.startLine // 0) | tostring) +
-              "\n  Message  : " + (.message.text // "no message") +
+              (.runs[0].tool.driver.rules // [] |
+               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
+               from_entries) as $sev |
+              .runs[0].results[] |
+              . as $r |
+              ($sev[$r.ruleId] // 0) as $cvss |
+              select($cvss >= 7.0) |
+              (if $cvss >= 9.0 then "CRITICAL" else "HIGH" end) as $label |
+              "  Severity : " + $label + " (CVSS " + ($cvss | tostring) + ")" +
+              "\n  Rule     : " + ($r.ruleId // "unknown") +
+              "\n  File     : " + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              "\n  Line     : " + (($r.locations[0].physicalLocation.region.startLine // 0) | tostring) +
+              "\n  Message  : " + ($r.message.text // "no message") +
               "\n  ----------------------------------------------------------"
             ' "$SARIF_FILE"
 
             # Inline annotations shown in PR diff and Actions log
             jq -r '
-              .runs[].results[] |
-              select(
-                (.properties.securitySeverityLevel // .level // "")
-                | ascii_downcase
-                | test("^(critical|high|error)$")
-              ) |
-              "::error file=" + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              ",line=" + ((.locations[0].physicalLocation.region.startLine // 1) | tostring) +
-              "::[" + ((.properties.securitySeverityLevel // .level // "unknown") | ascii_upcase) + "] " +
-              (.ruleId // "unknown") + ": " +
-              (.message.text // "no message")
+              (.runs[0].tool.driver.rules // [] |
+               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
+               from_entries) as $sev |
+              .runs[0].results[] |
+              . as $r |
+              ($sev[$r.ruleId] // 0) as $cvss |
+              select($cvss >= 7.0) |
+              (if $cvss >= 9.0 then "CRITICAL" else "HIGH" end) as $label |
+              "::error file=" + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              ",line=" + (($r.locations[0].physicalLocation.region.startLine // 1) | tostring) +
+              "::[$label CVSS:" + ($cvss | tostring) + "] " +
+              ($r.ruleId // "unknown") + ": " +
+              ($r.message.text // "no message")
             ' "$SARIF_FILE"
           else
             echo ""
@@ -139,15 +147,16 @@ jobs:
             echo ""
             echo "--- MEDIUM FINDINGS ($MEDIUM_COUNT) ---"
             jq -r '
-              .runs[].results[] |
-              select(
-                (.properties.securitySeverityLevel // .level // "")
-                | ascii_downcase
-                | test("^(medium|warning)$")
-              ) |
-              "  " + (.ruleId // "unknown") +
-              " @ " + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              ":" + ((.locations[0].physicalLocation.region.startLine // 0) | tostring)
+              (.runs[0].tool.driver.rules // [] |
+               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
+               from_entries) as $sev |
+              .runs[0].results[] |
+              . as $r |
+              ($sev[$r.ruleId] // 0) as $cvss |
+              select($cvss >= 4.0 and $cvss < 7.0) |
+              "  [MEDIUM CVSS:" + ($cvss | tostring) + "] " + ($r.ruleId // "unknown") +
+              " @ " + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              ":" + (($r.locations[0].physicalLocation.region.startLine // 0) | tostring)
             ' "$SARIF_FILE"
           fi
 
