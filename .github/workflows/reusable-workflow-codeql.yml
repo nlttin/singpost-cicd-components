@@ -18,6 +18,16 @@ on:
         required: false
         type: string
         default: 'security-extended'
+      fail-on-severity:
+        description: 'Fail pipeline if High/Critical found: error=block on high/critical, warning=block on medium+, none=report only'
+        required: false
+        type: string
+        default: 'none'
+      max-medium:
+        description: 'Max allowed Medium findings before failing (0 = disabled)'
+        required: false
+        type: number
+        default: 0
 
 jobs:
   codeql:
@@ -48,3 +58,125 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: /language:${{ inputs.language }}
+          output: sarif-results
+          upload: always
+
+      - name: Validate CodeQL Findings
+        env:
+          SEVERITY_OVERRIDE: ${{ inputs.fail-on-severity }}
+          MAX_MEDIUM: ${{ inputs.max-medium }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          SARIF_FILE=$(find sarif-results -name "*.sarif" | head -n 1)
+
+          if [ -z "$SARIF_FILE" ]; then
+            echo "No SARIF report found"
+            exit 1
+          fi
+
+          # Determine effective policy:
+          # - explicit input (non-'none') overrides branch detection
+          # - main branch -> fail on HIGH/CRITICAL
+          # - all other branches -> warn only, do not block
+          if [ "$SEVERITY_OVERRIDE" != "none" ] && [ -n "$SEVERITY_OVERRIDE" ]; then
+            POLICY="$SEVERITY_OVERRIDE"
+          elif [ "$BRANCH" == "main" ]; then
+            POLICY="error"
+          else
+            POLICY="warn"
+          fi
+
+          CRITICAL_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^critical$"))] | length' "$SARIF_FILE")
+          HIGH_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(high|error)$"))] | length' "$SARIF_FILE")
+          MEDIUM_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(medium|warning)$"))] | length' "$SARIF_FILE")
+          LOW_COUNT=$(jq '[.runs[].results[] | select((.properties.securitySeverityLevel // .level // "") | ascii_downcase | test("^(low|note)$"))] | length' "$SARIF_FILE")
+          HC_COUNT=$((CRITICAL_COUNT + HIGH_COUNT))
+
+          echo "============================================================"
+          echo "  CODEQL SECURITY SCAN REPORT"
+          echo "  Branch : $BRANCH"
+          echo "  Policy : $POLICY  (main=fail, other=warn)"
+          echo "============================================================"
+
+          if [ "$HC_COUNT" -gt 0 ]; then
+            echo ""
+            echo "--- HIGH / CRITICAL FINDINGS ($HC_COUNT) ---"
+            jq -r '
+              .runs[].results[] |
+              select(
+                (.properties.securitySeverityLevel // .level // "")
+                | ascii_downcase
+                | test("^(critical|high|error)$")
+              ) |
+              "  Severity : " + ((.properties.securitySeverityLevel // .level // "unknown") | ascii_upcase) +
+              "\n  Rule     : " + (.ruleId // "unknown") +
+              "\n  File     : " + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              "\n  Line     : " + ((.locations[0].physicalLocation.region.startLine // 0) | tostring) +
+              "\n  Message  : " + (.message.text // "no message") +
+              "\n  ----------------------------------------------------------"
+            ' "$SARIF_FILE"
+
+            # Inline annotations shown in PR diff and Actions log
+            jq -r '
+              .runs[].results[] |
+              select(
+                (.properties.securitySeverityLevel // .level // "")
+                | ascii_downcase
+                | test("^(critical|high|error)$")
+              ) |
+              "::error file=" + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              ",line=" + ((.locations[0].physicalLocation.region.startLine // 1) | tostring) +
+              "::[" + ((.properties.securitySeverityLevel // .level // "unknown") | ascii_upcase) + "] " +
+              (.ruleId // "unknown") + ": " +
+              (.message.text // "no message")
+            ' "$SARIF_FILE"
+          else
+            echo ""
+            echo "  No High/Critical findings."
+          fi
+
+          if [ "$MEDIUM_COUNT" -gt 0 ]; then
+            echo ""
+            echo "--- MEDIUM FINDINGS ($MEDIUM_COUNT) ---"
+            jq -r '
+              .runs[].results[] |
+              select(
+                (.properties.securitySeverityLevel // .level // "")
+                | ascii_downcase
+                | test("^(medium|warning)$")
+              ) |
+              "  " + (.ruleId // "unknown") +
+              " @ " + (.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
+              ":" + ((.locations[0].physicalLocation.region.startLine // 0) | tostring)
+            ' "$SARIF_FILE"
+          fi
+
+          echo ""
+          echo "============================================================"
+          echo "  SUMMARY"
+          echo "  Critical : $CRITICAL_COUNT"
+          echo "  High     : $HIGH_COUNT"
+          echo "  Medium   : $MEDIUM_COUNT"
+          echo "  Low      : $LOW_COUNT"
+          echo "============================================================"
+
+          if [ "$POLICY" == "error" ] && [ "$HC_COUNT" -gt 0 ]; then
+            echo ""
+            echo "::error::SECURITY GATE FAILED: $HC_COUNT High/Critical vulnerabilities on '$BRANCH'. Fix before merging to main."
+            exit 1
+          fi
+
+          if [ "$HC_COUNT" -gt 0 ]; then
+            echo ""
+            echo "::warning::SECURITY ADVISORY: $HC_COUNT High/Critical findings on '$BRANCH'. Review before merging to main."
+            echo "Security gate passed (advisory mode on non-main branch)."
+          else
+            echo ""
+            echo "Security gate passed."
+          fi
+
+          if [ "$MAX_MEDIUM" -gt 0 ] && [ "$MEDIUM_COUNT" -gt "$MAX_MEDIUM" ]; then
+            echo ""
+            echo "::error::MEDIUM THRESHOLD EXCEEDED: $MEDIUM_COUNT findings exceed limit of $MAX_MEDIUM."
+            exit 1
+          fi
