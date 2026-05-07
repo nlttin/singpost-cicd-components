@@ -127,11 +127,11 @@ jobs:
             fi
 
           else
-            echo "ERROR: No gitleaks config found"
-            exit 2
+            CONFIG=""
+            echo "No config found, using gitleaks built-in rules"
           fi
 
-          echo "Resolved config: $CONFIG"
+          echo "Resolved config: ${CONFIG:-<built-in>}"
           echo "config=$CONFIG" >> $GITHUB_OUTPUT
 
       
@@ -194,7 +194,11 @@ jobs:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
         shell: bash
         run: |
-          CONFIG_ARG="--config=${{ steps.config.outputs.config }}"
+          if [ -n "${{ steps.config.outputs.config }}" ]; then
+            CONFIG_ARG="--config=${{ steps.config.outputs.config }}"
+          else
+            CONFIG_ARG=""
+          fi
 
           if [ "${{ inputs.scan_mode }}" = "pr" ]; then
             LOG_OPTS="--log-opts=${{ steps.baseref.outputs.base_ref }}..HEAD"
