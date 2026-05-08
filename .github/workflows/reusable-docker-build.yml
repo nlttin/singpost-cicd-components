@@ -72,15 +72,19 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
 
       - name: Authenticate to GCP (Workload Identity)
-        if: inputs.push == true && secrets.WIF_PROVIDER != ''
+        if: inputs.push == true
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Configure Docker for GAR
-        if: inputs.push == true && secrets.WIF_PROVIDER != ''
-        run: gcloud auth configure-docker ${{ inputs.registry != '' && split(inputs.registry, '/')[0] || 'asia-southeast1-docker.pkg.dev' }} --quiet
+        if: inputs.push == true
+        run: |
+          REGISTRY="${{ inputs.registry }}"
+          REGISTRY_HOST="${REGISTRY%%/*}"
+          REGISTRY_HOST="${REGISTRY_HOST:-asia-southeast1-docker.pkg.dev}"
+          gcloud auth configure-docker "$REGISTRY_HOST" --quiet
 
       - name: Build Docker image
         id: build
@@ -88,7 +92,7 @@ jobs:
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
-          push: ${{ inputs.push == true && secrets.WIF_PROVIDER != '' }}
+          push: ${{ inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
