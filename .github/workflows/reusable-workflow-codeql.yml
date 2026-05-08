@@ -83,32 +83,35 @@ jobs:
             POLICY="warn"
           fi
 
-          # NOTE: CodeQL SARIF stores severity as CVSS score on the RULE definition,
-          # not on the result itself. Must lookup: rules[].properties["security-severity"]
-          # CVSS >= 9.0 = critical, >= 7.0 = high, >= 4.0 = medium, > 0 = low
-          JQ_RULE_MAP='(.runs[0].tool.driver.rules // [] |
+          # CodeQL v3 stores query rules in extensions[], NOT driver.rules[]
+          # Build rule severity map once (combining both locations) and reuse via --argjson
+          SEV_MAP=$(jq '
+            [
+              (.runs[0].tool.driver.rules // []),
+              (.runs[0].tool.extensions // [] | map(.rules // []) | add // [])
+            ] | add // [] |
             map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
-            from_entries) as $sev'
+            from_entries
+          ' "$SARIF_FILE")
 
-          CRITICAL_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | select(($sev[.ruleId] // 0) >= 9.0)] | length" "$SARIF_FILE")
-          HIGH_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c >= 7.0 and \$c < 9.0)] | length" "$SARIF_FILE")
-          MEDIUM_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c >= 4.0 and \$c < 7.0)] | length" "$SARIF_FILE")
-          LOW_COUNT=$(jq "${JQ_RULE_MAP} | [.runs[0].results[] | . as \$r | ($sev[\$r.ruleId] // 0) as \$c | select(\$c > 0.0 and \$c < 4.0)] | length" "$SARIF_FILE")
+          TOTAL_RESULTS=$(jq '.runs[0].results | length' "$SARIF_FILE")
+          CRITICAL_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | select(($sev[.ruleId] // 0) >= 9.0)] | length' "$SARIF_FILE")
+          HIGH_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) >= 7.0 and ($sev[$r.ruleId] // 0) < 9.0)] | length' "$SARIF_FILE")
+          MEDIUM_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) >= 4.0 and ($sev[$r.ruleId] // 0) < 7.0)] | length' "$SARIF_FILE")
+          LOW_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) > 0.0 and ($sev[$r.ruleId] // 0) < 4.0)] | length' "$SARIF_FILE")
           HC_COUNT=$((CRITICAL_COUNT + HIGH_COUNT))
 
           echo "============================================================"
           echo "  CODEQL SECURITY SCAN REPORT"
-          echo "  Branch : $BRANCH"
-          echo "  Policy : $POLICY  (main=fail, other=warn)"
+          echo "  Branch   : $BRANCH"
+          echo "  Policy   : $POLICY  (main=fail, other=warn)"
+          echo "  Total    : $TOTAL_RESULTS results found by CodeQL"
           echo "============================================================"
 
           if [ "$HC_COUNT" -gt 0 ]; then
             echo ""
             echo "--- HIGH / CRITICAL FINDINGS ($HC_COUNT) ---"
-            jq -r '
-              (.runs[0].tool.driver.rules // [] |
-               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
-               from_entries) as $sev |
+            jq -r --argjson sev "$SEV_MAP" '
               .runs[0].results[] |
               . as $r |
               ($sev[$r.ruleId] // 0) as $cvss |
@@ -123,10 +126,7 @@ jobs:
             ' "$SARIF_FILE"
 
             # Inline annotations shown in PR diff and Actions log
-            jq -r '
-              (.runs[0].tool.driver.rules // [] |
-               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
-               from_entries) as $sev |
+            jq -r --argjson sev "$SEV_MAP" '
               .runs[0].results[] |
               . as $r |
               ($sev[$r.ruleId] // 0) as $cvss |
@@ -146,10 +146,7 @@ jobs:
           if [ "$MEDIUM_COUNT" -gt 0 ]; then
             echo ""
             echo "--- MEDIUM FINDINGS ($MEDIUM_COUNT) ---"
-            jq -r '
-              (.runs[0].tool.driver.rules // [] |
-               map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
-               from_entries) as $sev |
+            jq -r --argjson sev "$SEV_MAP" '
               .runs[0].results[] |
               . as $r |
               ($sev[$r.ruleId] // 0) as $cvss |
