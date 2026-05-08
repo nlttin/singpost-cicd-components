@@ -82,13 +82,16 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build summary
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           echo "============================================"
           echo "  DOCKER BUILD SUMMARY"
           echo "  Image   : ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}"
           echo "  Branch  : ${{ github.ref_name }}"
           echo "  Tags    :"
-          echo "${{ steps.meta.outputs.tags }}" | sed 's/^/    /'
-          echo "  Digest  : ${{ steps.build.outputs.digest || 'N/A (not pushed)' }}""
+          echo "$IMAGE_TAGS" | sed 's/^/    /'
+          echo "  Digest  : ${IMAGE_DIGEST:-N/A (not pushed)}"
           echo "  Pushed  : ${{ inputs.push }}"
           echo "============================================"
