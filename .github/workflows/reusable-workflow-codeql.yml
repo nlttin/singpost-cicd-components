@@ -68,13 +68,8 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           SARIF_FILE=$(find sarif-results -name "*.sarif" | head -n 1)
+          [ -z "$SARIF_FILE" ] && echo "No SARIF report found" && exit 1
 
-          if [ -z "$SARIF_FILE" ]; then
-            echo "No SARIF report found"
-            exit 1
-          fi
-
-          # Determine effective policy
           if [ "$SEVERITY_OVERRIDE" != "none" ] && [ -n "$SEVERITY_OVERRIDE" ]; then
             POLICY="$SEVERITY_OVERRIDE"
           elif [ "$BRANCH" == "main" ]; then
@@ -83,106 +78,46 @@ jobs:
             POLICY="warn"
           fi
 
-          # CodeQL v3 stores query rules in extensions[], NOT driver.rules[]
-          # Build rule severity map once (combining both locations) and reuse via --argjson
+          # CodeQL stores rules in extensions[], not driver.rules[] — combine both
           SEV_MAP=$(jq '
-            [
-              (.runs[0].tool.driver.rules // []),
-              (.runs[0].tool.extensions // [] | map(.rules // []) | add // [])
-            ] | add // [] |
-            map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)}) |
-            from_entries
+            [(.runs[0].tool.driver.rules // []),
+             (.runs[0].tool.extensions // [] | map(.rules // []) | add // [])]
+            | add // []
+            | map({key: .id, value: (.properties["security-severity"] // "0" | try tonumber catch 0)})
+            | from_entries
           ' "$SARIF_FILE")
 
-          TOTAL_RESULTS=$(jq '.runs[0].results | length' "$SARIF_FILE")
-          CRITICAL_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | select(($sev[.ruleId] // 0) >= 9.0)] | length' "$SARIF_FILE")
-          HIGH_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) >= 7.0 and ($sev[$r.ruleId] // 0) < 9.0)] | length' "$SARIF_FILE")
-          MEDIUM_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) >= 4.0 and ($sev[$r.ruleId] // 0) < 7.0)] | length' "$SARIF_FILE")
-          LOW_COUNT=$(jq --argjson sev "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($sev[$r.ruleId] // 0) > 0.0 and ($sev[$r.ruleId] // 0) < 4.0)] | length' "$SARIF_FILE")
+          CRITICAL_COUNT=$(jq --argjson s "$SEV_MAP" '[.runs[0].results[] | select(($s[.ruleId]//0) >= 9.0)] | length' "$SARIF_FILE")
+          HIGH_COUNT=$(jq --argjson s "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($s[$r.ruleId]//0) >= 7.0 and ($s[$r.ruleId]//0) < 9.0)] | length' "$SARIF_FILE")
+          MEDIUM_COUNT=$(jq --argjson s "$SEV_MAP" '[.runs[0].results[] | . as $r | select(($s[$r.ruleId]//0) >= 4.0 and ($s[$r.ruleId]//0) < 7.0)] | length' "$SARIF_FILE")
           HC_COUNT=$((CRITICAL_COUNT + HIGH_COUNT))
 
-          echo "============================================================"
-          echo "  CODEQL SECURITY SCAN REPORT"
-          echo "  Branch   : $BRANCH"
-          echo "  Policy   : $POLICY  (main=fail, other=warn)"
-          echo "  Total    : $TOTAL_RESULTS results found by CodeQL"
-          echo "============================================================"
+          echo "Branch: $BRANCH | Policy: $POLICY | Critical: $CRITICAL_COUNT | High: $HIGH_COUNT | Medium: $MEDIUM_COUNT"
 
           if [ "$HC_COUNT" -gt 0 ]; then
-            echo ""
             echo "--- HIGH / CRITICAL FINDINGS ($HC_COUNT) ---"
-            jq -r --argjson sev "$SEV_MAP" '
-              .runs[0].results[] |
-              . as $r |
-              ($sev[$r.ruleId] // 0) as $cvss |
-              select($cvss >= 7.0) |
+            jq -r --argjson s "$SEV_MAP" '
+              .runs[0].results[] | . as $r |
+              ($s[$r.ruleId]//0) as $cvss | select($cvss >= 7.0) |
               (if $cvss >= 9.0 then "CRITICAL" else "HIGH" end) as $label |
-              "  Severity : " + $label + " (CVSS " + ($cvss | tostring) + ")" +
-              "\n  Rule     : " + ($r.ruleId // "unknown") +
-              "\n  File     : " + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              "\n  Line     : " + (($r.locations[0].physicalLocation.region.startLine // 0) | tostring) +
-              "\n  Message  : " + ($r.message.text // "no message") +
-              "\n  ----------------------------------------------------------"
-            ' "$SARIF_FILE"
-
-            # Inline annotations shown in PR diff and Actions log
-            jq -r --argjson sev "$SEV_MAP" '
-              .runs[0].results[] |
-              . as $r |
-              ($sev[$r.ruleId] // 0) as $cvss |
-              select($cvss >= 7.0) |
-              (if $cvss >= 9.0 then "CRITICAL" else "HIGH" end) as $label |
-              "::error file=" + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              ",line=" + (($r.locations[0].physicalLocation.region.startLine // 1) | tostring) +
-              "::[$label CVSS:" + ($cvss | tostring) + "] " +
-              ($r.ruleId // "unknown") + ": " +
-              ($r.message.text // "no message")
-            ' "$SARIF_FILE"
-          else
-            echo ""
-            echo "  No High/Critical findings."
-          fi
-
-          if [ "$MEDIUM_COUNT" -gt 0 ]; then
-            echo ""
-            echo "--- MEDIUM FINDINGS ($MEDIUM_COUNT) ---"
-            jq -r --argjson sev "$SEV_MAP" '
-              .runs[0].results[] |
-              . as $r |
-              ($sev[$r.ruleId] // 0) as $cvss |
-              select($cvss >= 4.0 and $cvss < 7.0) |
-              "  [MEDIUM CVSS:" + ($cvss | tostring) + "] " + ($r.ruleId // "unknown") +
-              " @ " + ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") +
-              ":" + (($r.locations[0].physicalLocation.region.startLine // 0) | tostring)
+              ($r.locations[0].physicalLocation.artifactLocation.uri // "unknown") as $file |
+              ($r.locations[0].physicalLocation.region.startLine // 1) as $line |
+              ($r.message.text // "no message") as $msg |
+              "  Severity : \($label) (CVSS \($cvss))\n  Rule     : \($r.ruleId // "unknown")\n  File     : \($file)\n  Line     : \($line)\n  Message  : \($msg)\n  ----------------------------------------------------------",
+              "::error file=\($file),line=\($line)::[\($label) CVSS:\($cvss)] \($r.ruleId // "unknown"): \($msg)"
             ' "$SARIF_FILE"
           fi
-
-          echo ""
-          echo "============================================================"
-          echo "  SUMMARY"
-          echo "  Critical : $CRITICAL_COUNT"
-          echo "  High     : $HIGH_COUNT"
-          echo "  Medium   : $MEDIUM_COUNT"
-          echo "  Low      : $LOW_COUNT"
-          echo "============================================================"
 
           if [ "$POLICY" == "error" ] && [ "$HC_COUNT" -gt 0 ]; then
-            echo ""
-            echo "::error::SECURITY GATE FAILED: $HC_COUNT High/Critical vulnerabilities on '$BRANCH'. Fix before merging to main."
+            echo "::error::SECURITY GATE FAILED: $HC_COUNT High/Critical findings on '$BRANCH'. Fix before merging to main."
             exit 1
-          fi
-
-          if [ "$HC_COUNT" -gt 0 ]; then
-            echo ""
+          elif [ "$HC_COUNT" -gt 0 ]; then
             echo "::warning::SECURITY ADVISORY: $HC_COUNT High/Critical findings on '$BRANCH'. Review before merging to main."
-            echo "Security gate passed (advisory mode on non-main branch)."
           else
-            echo ""
             echo "Security gate passed."
           fi
 
           if [ "$MAX_MEDIUM" -gt 0 ] && [ "$MEDIUM_COUNT" -gt "$MAX_MEDIUM" ]; then
-            echo ""
             echo "::error::MEDIUM THRESHOLD EXCEEDED: $MEDIUM_COUNT findings exceed limit of $MAX_MEDIUM."
             exit 1
           fi
