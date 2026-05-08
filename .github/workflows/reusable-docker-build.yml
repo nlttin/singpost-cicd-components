@@ -89,6 +89,6 @@ jobs:
           echo "  Branch  : ${{ github.ref_name }}"
           echo "  Tags    :"
           echo "${{ steps.meta.outputs.tags }}" | sed 's/^/    /'
-          echo "  Digest  : ${{ steps.build.outputs.digest || 'N/A (not pushed)' }}"
+          echo "  Digest  : ${{ steps.build.outputs.digest || 'N/A (not pushed)' }}""
           echo "  Pushed  : ${{ inputs.push }}"
           echo "============================================"
