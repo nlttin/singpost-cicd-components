@@ -1,0 +1,166 @@
+name: Reusable - Cloud Build & Cloud Run Deploy
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Cloud Run service name (e.g. singpost-app-ingestion-dev)'
+        required: true
+        type: string
+      image-name:
+        description: 'Image name in GAR (e.g. singpost-app-ingestion)'
+        required: true
+        type: string
+      project-id:
+        description: 'GCP project ID'
+        required: true
+        type: string
+      region:
+        description: 'GCP region'
+        required: false
+        type: string
+        default: 'asia-southeast1'
+      wif-provider:
+        description: 'WIF provider resource name (projects/NUM/locations/global/workloadIdentityPools/POOL/providers/PROVIDER)'
+        required: true
+        type: string
+      deployer-sa:
+        description: 'Deployer service account email (used by GitHub Actions)'
+        required: true
+        type: string
+      runtime-sa:
+        description: 'Runtime service account email (attached to Cloud Run service)'
+        required: true
+        type: string
+      min-instances:
+        description: 'Minimum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 0
+      max-instances:
+        description: 'Maximum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 10
+    outputs:
+      url:
+        description: 'Deployed Cloud Run service URL'
+        value: ${{ jobs.deploy.outputs.url }}
+
+# =============================================================
+# REQUIRED GCP SETUP (one-time, done via Terraform or gcloud)
+# =============================================================
+#
+# 1. WORKLOAD IDENTITY FEDERATION (Task 3 - OIDC trust)
+#    gcloud iam workload-identity-pools create singpost-wif-pool \
+#      --location=global --project=PROJECT_ID
+#
+#    gcloud iam workload-identity-pools providers create-oidc github-provider \
+#      --location=global \
+#      --workload-identity-pool=singpost-wif-pool \
+#      --issuer-uri=https://token.actions.githubusercontent.com \
+#      --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+#      --attribute-condition="assertion.repository_owner=='nlttin'" \
+#      --project=PROJECT_ID
+#
+# 2. SERVICE ACCOUNTS (Task 1 - runtime SA / Task 2 - deployer SA)
+#    gcloud iam service-accounts create singpost-deployer --project=PROJECT_ID
+#    gcloud iam service-accounts create singpost-runtime  --project=PROJECT_ID
+#
+# 3. IAM ROLES FOR DEPLOYER SA (Task 2)
+#    roles/cloudbuild.builds.editor     → trigger Cloud Build
+#    roles/artifactregistry.writer      → push image to GAR
+#    roles/run.admin                    → deploy Cloud Run service
+#    roles/iam.serviceAccountUser       → act as runtime-sa
+#
+#    gcloud projects add-iam-policy-binding PROJECT_ID \
+#      --member="serviceAccount:singpost-deployer@PROJECT_ID.iam.gserviceaccount.com" \
+#      --role="roles/cloudbuild.builds.editor"
+#    (repeat for each role above)
+#
+# 4. WIF BINDING TO DEPLOYER SA (Task 3 - allow GitHub to impersonate SA)
+#    gcloud iam service-accounts add-iam-policy-binding \
+#      singpost-deployer@PROJECT_ID.iam.gserviceaccount.com \
+#      --role=roles/iam.workloadIdentityUser \
+#      --member="principalSet://iam.googleapis.com/projects/PROJECT_NUM/locations/global/workloadIdentityPools/singpost-wif-pool/attribute.repository/nlttin/REPO_NAME"
+#
+# 5. ARTIFACT REGISTRY REPOSITORY (Task 1 - image storage)
+#    gcloud artifacts repositories create singpost \
+#      --repository-format=docker \
+#      --location=asia \
+#      --project=PROJECT_ID
+#
+# 6. GITHUB SECRETS/VARIABLES TO CONFIGURE
+#    vars.GCP_PROJECT_ID     → GCP project ID
+#    secrets.WIF_PROVIDER    → full WIF provider resource name
+#    secrets.GCP_DEPLOYER_SA → deployer SA email
+#    secrets.GCP_RUNTIME_SA  → runtime SA email
+# =============================================================
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service-name }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write  # Required: allows OIDC token exchange with GCP WIF
+
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Task 3: Exchange GitHub OIDC token for GCP access token via WIF
+      # No service account key file needed — zero long-lived credentials
+      - name: Authenticate to GCP via WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif-provider }}
+          service_account: ${{ inputs.deployer-sa }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Task 1 (Cloud Build): Build Docker image from repo source and push to GAR
+      # GAR path: asia-docker.pkg.dev/{project-id}/singpost/{image-name}:{sha}
+      - name: Build and push to GAR via Cloud Build
+        env:
+          GAR_IMAGE: asia-docker.pkg.dev/${{ inputs.project-id }}/singpost/${{ inputs.image-name }}:${{ github.sha }}
+        run: |
+          gcloud builds submit \
+            --project="${{ inputs.project-id }}" \
+            --region="${{ inputs.region }}" \
+            --tag="$GAR_IMAGE" \
+            --quiet
+          echo "GAR_IMAGE=$GAR_IMAGE" >> $GITHUB_ENV
+
+      # Task 1 (Cloud Run config) + Task 2 (runtime SA):
+      # Deploy service with runtime SA identity and network/scaling config
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service-name }}
+          region: ${{ inputs.region }}
+          image: ${{ env.GAR_IMAGE }}
+          project_id: ${{ inputs.project-id }}
+          flags: >-
+            --service-account=${{ inputs.runtime-sa }}
+            --min-instances=${{ inputs.min-instances }}
+            --max-instances=${{ inputs.max-instances }}
+            --ingress=internal-and-cloud-load-balancing
+            --no-allow-unauthenticated
+
+      - name: Deploy summary
+        run: |
+          echo "============================================"
+          echo "  CLOUD RUN DEPLOY SUMMARY"
+          echo "  Service : ${{ inputs.service-name }}"
+          echo "  Region  : ${{ inputs.region }}"
+          echo "  Image   : ${{ env.GAR_IMAGE }}"
+          echo "  URL     : ${{ steps.deploy.outputs.url }}"
+          echo "============================================"
