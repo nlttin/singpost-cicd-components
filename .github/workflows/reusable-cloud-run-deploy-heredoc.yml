@@ -1,0 +1,143 @@
+name: Reusable - Cloud Build (heredoc) & Cloud Run Deploy
+
+# Approach C: build config is generated inline as a heredoc and written to a
+# tmp file before calling `gcloud builds submit --config`. Keeps the build
+# definition in one place (this workflow) but still uses Cloud Build's native
+# config format, so we are not stuck with the single-step `--tag` shortcut.
+# Trade-off: build config is shared across all callers; per-app customisation
+# is not possible without editing this workflow.
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Cloud Run service name (e.g. singpost-app-sftp-dev)'
+        required: true
+        type: string
+      image-name:
+        description: 'Image name in GAR (e.g. singpost-app-sftp)'
+        required: true
+        type: string
+      project-id:
+        description: 'GCP project ID'
+        required: true
+        type: string
+      region:
+        description: 'GCP region'
+        required: false
+        type: string
+        default: 'asia-southeast1'
+      dockerfile:
+        description: 'Path to Dockerfile inside the calling repo'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      wif-provider:
+        description: 'WIF provider resource name'
+        required: true
+        type: string
+      deployer-sa:
+        description: 'Deployer service account email'
+        required: true
+        type: string
+      runtime-sa:
+        description: 'Runtime service account email (attached to Cloud Run service)'
+        required: true
+        type: string
+      min-instances:
+        description: 'Minimum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 0
+      max-instances:
+        description: 'Maximum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 10
+    outputs:
+      url:
+        description: 'Deployed Cloud Run service URL'
+        value: ${{ jobs.deploy.outputs.url }}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service-name }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif-provider }}
+          service_account: ${{ inputs.deployer-sa }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Generate cloudbuild config (heredoc)
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          cat > /tmp/cloudbuild.yaml <<EOF
+          steps:
+            - name: gcr.io/cloud-builders/docker
+              id: build
+              args: ['build', '-f', '${DOCKERFILE}', '-t', '\${_IMAGE}', '.']
+            - name: gcr.io/cloud-builders/docker
+              id: push
+              args: ['push', '\${_IMAGE}']
+              waitFor: ['build']
+          images:
+            - '\${_IMAGE}'
+          options:
+            logging: CLOUD_LOGGING_ONLY
+          EOF
+          echo "--- Generated cloudbuild.yaml ---"
+          cat /tmp/cloudbuild.yaml
+
+      - name: Build and push to GAR via Cloud Build
+        env:
+          GAR_IMAGE: asia-docker.pkg.dev/${{ inputs.project-id }}/singpost/${{ inputs.image-name }}:${{ github.sha }}
+        run: |
+          gcloud builds submit \
+            --project="${{ inputs.project-id }}" \
+            --region="${{ inputs.region }}" \
+            --config=/tmp/cloudbuild.yaml \
+            --substitutions=_IMAGE="$GAR_IMAGE" \
+            --quiet
+          echo "GAR_IMAGE=$GAR_IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service-name }}
+          region: ${{ inputs.region }}
+          image: ${{ env.GAR_IMAGE }}
+          project_id: ${{ inputs.project-id }}
+          flags: >-
+            --service-account=${{ inputs.runtime-sa }}
+            --min-instances=${{ inputs.min-instances }}
+            --max-instances=${{ inputs.max-instances }}
+            --ingress=internal-and-cloud-load-balancing
+            --no-allow-unauthenticated
+
+      - name: Deploy summary
+        run: |
+          echo "============================================"
+          echo "  CLOUD RUN DEPLOY SUMMARY (heredoc)"
+          echo "  Service : ${{ inputs.service-name }}"
+          echo "  Region  : ${{ inputs.region }}"
+          echo "  Image   : ${{ env.GAR_IMAGE }}"
+          echo "  URL     : ${{ steps.deploy.outputs.url }}"
+          echo "============================================"

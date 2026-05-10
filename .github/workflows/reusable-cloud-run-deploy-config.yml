@@ -1,0 +1,129 @@
+name: Reusable - Cloud Build (cloudbuild.yaml) & Cloud Run Deploy
+
+# Approach A: build is driven by a cloudbuild.yaml file living in the calling
+# app repo. Lets devs reproduce the exact CI build locally with:
+#   gcloud builds submit --config=cloudbuild.yaml --substitutions=_IMAGE=...
+# and lets each app customise its own build steps without touching CI.
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Cloud Run service name (e.g. singpost-app-ingestion-dev)'
+        required: true
+        type: string
+      image-name:
+        description: 'Image name in GAR (e.g. singpost-app-ingestion)'
+        required: true
+        type: string
+      project-id:
+        description: 'GCP project ID'
+        required: true
+        type: string
+      region:
+        description: 'GCP region'
+        required: false
+        type: string
+        default: 'asia-southeast1'
+      cloudbuild-config:
+        description: 'Path to cloudbuild.yaml in the calling repo'
+        required: false
+        type: string
+        default: 'cloudbuild.yaml'
+      wif-provider:
+        description: 'WIF provider resource name'
+        required: true
+        type: string
+      deployer-sa:
+        description: 'Deployer service account email (used by GitHub Actions)'
+        required: true
+        type: string
+      runtime-sa:
+        description: 'Runtime service account email (attached to Cloud Run service)'
+        required: true
+        type: string
+      min-instances:
+        description: 'Minimum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 0
+      max-instances:
+        description: 'Maximum number of Cloud Run instances'
+        required: false
+        type: number
+        default: 10
+    outputs:
+      url:
+        description: 'Deployed Cloud Run service URL'
+        value: ${{ jobs.deploy.outputs.url }}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service-name }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif-provider }}
+          service_account: ${{ inputs.deployer-sa }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify cloudbuild config exists
+        run: |
+          if [ ! -f "${{ inputs.cloudbuild-config }}" ]; then
+            echo "::error::cloudbuild config not found at ${{ inputs.cloudbuild-config }}"
+            exit 1
+          fi
+          echo "Using build config: ${{ inputs.cloudbuild-config }}"
+
+      - name: Build and push to GAR via Cloud Build
+        env:
+          GAR_IMAGE: asia-docker.pkg.dev/${{ inputs.project-id }}/singpost/${{ inputs.image-name }}:${{ github.sha }}
+        run: |
+          gcloud builds submit \
+            --project="${{ inputs.project-id }}" \
+            --region="${{ inputs.region }}" \
+            --config="${{ inputs.cloudbuild-config }}" \
+            --substitutions=_IMAGE="$GAR_IMAGE" \
+            --quiet
+          echo "GAR_IMAGE=$GAR_IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service-name }}
+          region: ${{ inputs.region }}
+          image: ${{ env.GAR_IMAGE }}
+          project_id: ${{ inputs.project-id }}
+          flags: >-
+            --service-account=${{ inputs.runtime-sa }}
+            --min-instances=${{ inputs.min-instances }}
+            --max-instances=${{ inputs.max-instances }}
+            --ingress=internal-and-cloud-load-balancing
+            --no-allow-unauthenticated
+
+      - name: Deploy summary
+        run: |
+          echo "============================================"
+          echo "  CLOUD RUN DEPLOY SUMMARY (config-driven)"
+          echo "  Service : ${{ inputs.service-name }}"
+          echo "  Region  : ${{ inputs.region }}"
+          echo "  Image   : ${{ env.GAR_IMAGE }}"
+          echo "  Config  : ${{ inputs.cloudbuild-config }}"
+          echo "  URL     : ${{ steps.deploy.outputs.url }}"
+          echo "============================================"
