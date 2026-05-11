@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: '.'
+      environment:
+        description: 'Environment name used as image tag (e.g. dev, sit, uat, preprod, prod)'
+        required: false
+        type: string
+        default: ''
       push:
         description: 'Push image to GHCR (ghcr.io)'
         required: false
@@ -68,6 +73,7 @@ jobs:
             type=ref,event=pr
             type=sha,prefix=sha-,format=short
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=${{ inputs.environment }},enable=${{ inputs.environment != '' }}
 
       - name: Build Docker image
         id: build
