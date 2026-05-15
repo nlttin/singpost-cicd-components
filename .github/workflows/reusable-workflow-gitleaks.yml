@@ -42,9 +42,10 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
 
-    permissions: 
-      contents: read 
+    permissions:
+      contents: read
       security-events: write
+      actions: read
 
     steps:
       # Checkout caller repository
@@ -201,7 +202,13 @@ jobs:
           fi
 
           if [ "${{ inputs.scan_mode }}" = "pr" ]; then
-            LOG_OPTS="--log-opts=${{ steps.baseref.outputs.base_ref }}..HEAD"
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              LOG_OPTS="--log-opts=${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+            elif [ "${{ github.event_name }}" = "push" ]; then
+              LOG_OPTS="--log-opts=${{ github.event.before }}..${{ github.sha }}"
+            else
+              LOG_OPTS="--log-opts=${{ steps.baseref.outputs.base_ref }}..HEAD"
+            fi
           else
             LOG_OPTS=""
           fi
