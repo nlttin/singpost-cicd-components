@@ -1,0 +1,88 @@
+name: Reusable - Vitest
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      working_directory:
+        description: 'Working directory of the caller repo'
+        required: false
+        type: string
+        default: '.'
+      install_command:
+        description: 'Command used to install repo dependencies'
+        required: false
+        type: string
+        default: 'npm ci'
+      test_command:
+        description: 'Vitest command to run'
+        required: false
+        type: string
+        default: 'npx vitest run --coverage'
+      coverage_report:
+        description: 'Post coverage summary as PR comment (only effective on pull_request events)'
+        required: false
+        type: boolean
+        default: true
+      fail_on_error:
+        description: 'Fail the workflow when tests fail'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  vitest:
+    name: Run Vitest
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: ${{ inputs.install_command }}
+
+      - name: Run Vitest
+        id: vitest
+        continue-on-error: ${{ !inputs.fail_on_error }}
+        shell: bash
+        run: ${{ inputs.test_command }}
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-coverage
+          path: ${{ inputs.working_directory }}/coverage
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Post coverage report comment
+        if: ${{ always() && inputs.coverage_report && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: ${{ inputs.working_directory }}

@@ -1,0 +1,115 @@
+name: Reusable - ESLint
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: 'Node.js version (>= 20 required for ESLint v10)'
+        required: false
+        type: string
+        default: '20'
+      working_directory:
+        description: 'Working directory of the caller repo'
+        required: false
+        type: string
+        default: '.'
+      config_file:
+        description: 'ESLint flat config file path'
+        required: false
+        type: string
+        default: 'eslint.config.mjs'
+      eslint_version:
+        description: 'ESLint version to install if not in package.json'
+        required: false
+        type: string
+        default: '10.4.0'
+      file_patterns:
+        description: 'Files / directories to lint'
+        required: false
+        type: string
+        default: '.'
+      fail_on_error:
+        description: 'Fail the workflow when ESLint reports errors'
+        required: false
+        type: boolean
+        default: false
+      install_command:
+        description: 'Command used to install repo dependencies'
+        required: false
+        type: string
+        default: 'npm install'
+
+jobs:
+  eslint:
+    name: Run ESLint
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            ${{ inputs.install_command }}
+          fi
+          if ! npx --no-install eslint --version >/dev/null 2>&1; then
+            echo "ESLint not found in repo, installing pinned version ${{ inputs.eslint_version }}"
+            npm install --no-save eslint@${{ inputs.eslint_version }}
+          fi
+          if ! npx --no-install @microsoft/eslint-formatter-sarif --version >/dev/null 2>&1; then
+            npm install --no-save @microsoft/eslint-formatter-sarif@3
+          fi
+
+      - name: Run ESLint
+        id: eslint
+        continue-on-error: ${{ !inputs.fail_on_error }}
+        env:
+          SARIF_ESLINT_IGNORE_SUPPRESSED: 'true'
+        shell: bash
+        run: |
+          npx eslint ${{ inputs.file_patterns }} \
+            --config ${{ inputs.config_file }} \
+            --format @microsoft/eslint-formatter-sarif \
+            --output-file eslint-results.sarif
+
+      - name: Print ESLint summary
+        if: always()
+        shell: bash
+        run: |
+          npx eslint ${{ inputs.file_patterns }} \
+            --config ${{ inputs.config_file }} \
+            --format stylish || true
+
+      - name: Upload SARIF to GitHub Security
+        if: always() && github.event_name == 'push'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.working_directory }}/eslint-results.sarif
+          category: eslint
+          wait-for-processing: true
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-report
+          path: ${{ inputs.working_directory }}/eslint-results.sarif
+          retention-days: 30
