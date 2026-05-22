@@ -4,22 +4,18 @@ on:
   workflow_call:
     inputs:
       node_version:
-        description: 'Node.js version'
         required: false
         type: string
         default: '20'
       working_directory:
-        description: 'Working directory of the caller repo'
         required: false
         type: string
         default: '.'
       install_command:
-        description: 'Command used to install repo dependencies'
         required: false
         type: string
         default: 'npm ci'
       test_command:
-        description: 'Vitest command to run'
         required: false
         type: string
         default: 'npx vitest run --coverage'
